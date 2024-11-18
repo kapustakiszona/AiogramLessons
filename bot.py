@@ -7,6 +7,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.filters import CommandStart
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.markdown import hide_link
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -237,15 +239,23 @@ async def monitor_links():
 
                 if data["links"]:
                     for link in data["links"]:
-                        item_titles, item_image_content, item_data_testid = await asyncio.to_thread(fetch_vinted_items,
-                                                                                                    link, driver)
-                        for title, img_url, item_id in zip(item_titles, item_image_content, item_data_testid):
+                        item_description, item_image_content, item_data_testid, item_url = await asyncio.to_thread(
+                            fetch_vinted_items,
+                            link, driver)
+                        for title, img_url, item_id, item_url in zip(item_description, item_image_content,
+                                                                     item_data_testid, item_url):
                             # Убедитесь, что товар имеет уникальный img_url и все его данные корректны
                             if img_url and img_url not in data["sent_items"]:
+                                builder = InlineKeyboardBuilder()
+                                builder.row(types.InlineKeyboardButton(
+                                    text="Show", url=item_url)
+                                )
                                 if title:  # Проверка наличия названия товара
                                     await bot.send_message(
                                         user_id,
-                                        f"Новый товар: {title}\nИзображение: {img_url}"
+                                        f"Новый товар: {title}\n"
+                                        f"{hide_link(img_url)}",
+                                        reply_markup=builder.as_markup()
                                     )
                                     # Добавляем ссылку на изображение в список отправленных товаров
                                     data["sent_items"].add(img_url)
@@ -281,13 +291,14 @@ def fetch_vinted_items(url, driver):
         return [], [], []
 
     items = driver.find_elements(By.CLASS_NAME, "new-item-box__container")
-    item_description, item_image_content, item_data_testid = [], [], []
+    item_description, item_image_content, item_data_testid, item_url = [], [], [], []
 
     for item in items:
         try:
             title_element = item.find_element(By.XPATH,
                                               '/html/body/div[1]/div/div/main/div/div[1]/div/div[2]/div/div/div/section/div[15]/div/div[1]/div/div/div/div[2]/a')
             item_description.append(title_element.get_attribute('title'))
+            item_url.append(title_element.get_attribute('href'))
         except Exception as e:
             item_description.append(None)
             logger.error(f"Ошибка получения названия товара: {e}")
@@ -306,7 +317,7 @@ def fetch_vinted_items(url, driver):
             item_data_testid.append(None)
             logger.error(f"Ошибка получения ID товара: {e}")
 
-    return item_description, item_image_content, item_data_testid
+    return item_description, item_image_content, item_data_testid, item_url
 
 
 # Запуск бота и мониторинга
