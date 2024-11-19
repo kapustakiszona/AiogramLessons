@@ -253,7 +253,7 @@ async def monitor_links():
                                 if title:  # Проверка наличия названия товара
                                     await bot.send_message(
                                         user_id,
-                                        f"Новый товар: {title}\n"
+                                        f"{title}\n"
                                         f"{hide_link(img_url)}",
                                         reply_markup=builder.as_markup()
                                     )
@@ -269,7 +269,7 @@ async def monitor_links():
         driver.quit()
 
 
-# В функции, где вы обращаетесь к сайту, добавьте случайные задержки
+# Случайная задержка при обращении к сайту
 def random_delay(min_seconds=1, max_seconds=3):
     time.sleep(random.uniform(min_seconds, max_seconds))
 
