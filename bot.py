@@ -5,7 +5,7 @@ import time
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import Message, KeyboardButton
 from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hide_link
@@ -21,6 +21,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram import F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -37,17 +38,13 @@ admins = {963960111}  # Замените на ID администраторов
 # Хранилище пользователей и их ссылок
 users_data = {}  # Структура: {user_id: {"links": [], "sent_items": set(), "is_premium": False, "is_admin": False}}
 
-# Создание клавиатуры
-keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Добавить ссылку")],
-        [KeyboardButton(text="Удалить ссылку")],
-        [KeyboardButton(text="Показать список")],
-        [KeyboardButton(text="Помощь")],
-        [KeyboardButton(text="Администрирование")]
-    ],
-    resize_keyboard=True
-)
+keyboard = ReplyKeyboardBuilder()
+keyboard.add(KeyboardButton(text="Добавить ссылку"))
+keyboard.add(KeyboardButton(text="Удалить ссылку"))
+keyboard.add(KeyboardButton(text="Показать список"))
+keyboard.add(KeyboardButton(text="Помощь"))
+keyboard.adjust(2)
+
 
 
 # Определяем состояния
@@ -64,10 +61,13 @@ async def cmd_start(message: Message):
     if user_id not in users_data:
         # Инициализируем пользователя с ключом 'sent_items'
         users_data[user_id] = {"links": [], "sent_items": set(), "is_premium": False, "is_admin": user_id in admins}
+    if users_data[user_id]["is_admin"]:
+        users_data[user_id]["is_premium"] = True
+        keyboard.add(KeyboardButton(text="Администрирование"))
     await message.answer(
         "Привет! Я бот для отслеживания товаров на Vinted.\n"
         "Выберите действие с помощью кнопок ниже:",
-        reply_markup=keyboard
+        reply_markup=keyboard.as_markup(resize_keyboard=True)
     )
     logger.info(f"User {user_id} started the bot")
 
@@ -253,7 +253,7 @@ async def monitor_links():
                                 if title:  # Проверка наличия названия товара
                                     await bot.send_message(
                                         user_id,
-                                        f"{title}\n"
+                                        f"{"\n".join(part.replace(":", ": <b>") + "</b>" if ":" in part else part for part in title.split(", "))}\n"
                                         f"{hide_link(img_url)}",
                                         reply_markup=builder.as_markup()
                                     )
@@ -284,13 +284,13 @@ def fetch_vinted_items(url, driver):
 
         # Явное ожидание загрузки контента
         WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CLASS_NAME, "new-item-box__container"))
+            EC.presence_of_all_elements_located((By.CLASS_NAME, "feed-grid"))
         )
     except Exception as e:
         logger.error(f"Ошибка загрузки страницы: {e}")
         return [], [], []
 
-    items = driver.find_elements(By.CLASS_NAME, "new-item-box__container")
+    items = driver.find_elements(By.CLASS_NAME, "feed-grid")
     item_description, item_image_content, item_data_testid, item_url = [], [], [], []
 
     for item in items:
@@ -312,7 +312,8 @@ def fetch_vinted_items(url, driver):
             logger.error(f"Ошибка получения изображения товара: {e}")
 
         try:
-            item_data_testid.append(item.get_attribute('data-testid'))
+            data_testid = item.find_element(By.CLASS_NAME, "new-item-box__container")
+            item_data_testid.append(data_testid.get_attribute('data-testid'))
         except Exception as e:
             item_data_testid.append(None)
             logger.error(f"Ошибка получения ID товара: {e}")
