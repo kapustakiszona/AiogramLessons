@@ -1,3 +1,5 @@
+from typing import Set
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 
@@ -6,7 +8,7 @@ class Settings(BaseSettings):
     # Желательно вместо str использовать SecretStr
     # для конфиденциальных данных, например, токена бота
     bot_token: SecretStr
-
+    admins: SecretStr
     # Начиная со второй версии pydantic, настройки класса настроек задаются
     # через model_config
     # В данном случае будет использоваться файла .env, который будет прочитан
@@ -17,4 +19,8 @@ class Settings(BaseSettings):
 # При импорте файла сразу создастся
 # и провалидируется объект конфига,
 # который можно далее импортировать из разных мест
-config = Settings()
+try:
+    config = Settings()
+except Exception as e:
+    print("Ошибка загрузки конфигурации:", e)
+    raise
