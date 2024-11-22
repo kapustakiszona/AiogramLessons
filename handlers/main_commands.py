@@ -1,3 +1,8 @@
+import random
+import time
+import urllib
+from urllib import parse
+
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -53,7 +58,8 @@ async def save_link(message: Message, state: FSMContext):
 @router.message(F.text == "Удалить ссылку")
 async def remove_link_start(message: Message, state: FSMContext):
     user_id = message.chat.id
-    if users_data[user_id]["links"]:
+    logger.info(f"User {user_id} requested to remove a link.")
+    if users_data.get(user_id) and users_data[user_id]["links"]:
         links = "\n".join(users_data[user_id]["links"])
         await message.answer(
             f"Ваши отслеживаемые ссылки:\n{links}\nПожалуйста, отправьте ссылку, которую хотите удалить.")
@@ -61,13 +67,13 @@ async def remove_link_start(message: Message, state: FSMContext):
     else:
         await message.answer("У вас нет добавленных ссылок для отслеживания.")
 
-
 # Хендлер для удаления ссылки
 @router.message(LinkStates.waiting_for_link_removal)
 async def remove_link(message: Message, state: FSMContext):
     user_id = message.chat.id
     link = message.text
-    if link in users_data[user_id]["links"]:
+    logger.info(f"User {user_id} wants to remove link: {link}")
+    if link in users_data.get(user_id, {}).get("links", []):
         users_data[user_id]["links"].remove(link)
         await message.answer(f"Ссылка {link} удалена из отслеживания.")
         logger.info(f"Link {link} removed by user {user_id}")
@@ -95,8 +101,32 @@ async def show_help(message: Message):
         "Вот доступные команды:\n"
         "/start - Запустить бота\n"
         "Добавить ссылку - Отправить ссылку, которую бот будет отслеживать\n"
+        "Сгенерировать ссылку - Сгенерировать ссылку и добавить ее в отслеживаемые\n"
         "Удалить ссылку - Удалить ссылку из отслеживания\n"
         "Показать список - Показать все добавленные ссылки для отслеживания\n"
         "Помощь - Информация о боте"
     )
     await message.answer(help_text)
+
+# Хендлер для кнопки "Сгенерировать ссылку"
+@router.message(F.text == "Сгенерировать ссылку")
+async def generate_link_start(message: Message, state: FSMContext):
+    await message.answer("Пожалуйста, отправьте название предмета для генерации ссылки.")
+    await state.set_state(LinkStates.waiting_for_generated_link_name)
+
+# Хендлер для получения названия предмета от пользователя
+@router.message(LinkStates.waiting_for_generated_link_name)
+async def generate_link(message: Message, state: FSMContext):
+    user_id = message.chat.id
+    item_name = message.text
+    base_url = "https://www.vinted.pl/catalog"
+    search_text = urllib.parse.quote(item_name)
+    search_id = random.randint(1000000000, 9999999999)
+    order = "newest_first"
+    time_param = int(time.time())
+    generated_link = f"{base_url}?search_text={search_text}&search_id={search_id}&order={order}&time={time_param}"
+
+    users_data[user_id]["links"].append(generated_link)
+    await message.answer(f"Ссылка для предмета '{item_name}' сгенерирована и добавлена для отслеживания: {generated_link}")
+    logger.info(f"Generated link {generated_link} added by user {user_id}")
+    await state.clear()

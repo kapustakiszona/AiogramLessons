@@ -3,7 +3,6 @@ import random
 import time
 
 from aiogram import types
-
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hide_link
 from selenium import webdriver
@@ -17,13 +16,12 @@ from aiogram.fsm.state import StatesGroup, State
 from create_bot import logger, bot, dp, users_data
 from handlers import main_commands, admin_commands
 
-
 # Определяем состояния
 class LinkStates(StatesGroup):
     waiting_for_link = State()
     waiting_for_link_removal = State()
     waiting_for_admin_action = State()
-
+    waiting_for_generated_link_name = State()
 
 # Настройка Chrome в headless режиме
 def setup_driver():
@@ -40,7 +38,6 @@ def setup_driver():
     except Exception as e:
         logger.error(f"Ошибка инициализации драйвера: {e}")
         raise
-
 
 async def monitor_links():
     driver = setup_driver()
@@ -61,9 +58,6 @@ async def monitor_links():
 
                         # Определяем новые элементы, которых не было в предыдущем наборе
                         new_items = current_items - data["previous_items"]
-
-                        # Обновляем предыдущие элементы для следующей итерации
-                        data["previous_items"] = current_items
 
                         # Отправляем только те элементы, которые не были отправлены ранее
                         for item in items:
@@ -88,15 +82,17 @@ async def monitor_links():
                             else:
                                 logger.debug(
                                     f"Item with ID {item['item_id']} already sent to user {user_id}, skipping.")
+
+                        # Обновляем предыдущие элементы для следующей итерации после отправки всех новых элементов
+                        data["previous_items"] = current_items
+
             await asyncio.sleep(30)
     finally:
         driver.quit()
 
-
 # Случайная задержка при обращении к сайту
 def random_delay(min_seconds=1, max_seconds=3):
     time.sleep(random.uniform(min_seconds, max_seconds))
-
 
 # Функция для получения и парсинга данных с сайта Vinted
 def fetch_vinted_items(url, driver):
@@ -137,7 +133,6 @@ def fetch_vinted_items(url, driver):
 
     return results
 
-
 # Запуск бота и мониторинга
 async def main():
     logger.info("Bot started")
@@ -147,7 +142,6 @@ async def main():
         dp.start_polling(bot),
         monitor_links()
     )
-
 
 if __name__ == "__main__":
     asyncio.run(main())
