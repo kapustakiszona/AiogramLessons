@@ -1,5 +1,6 @@
 import asyncio
 import random
+import re
 import time
 
 from aiogram import types
@@ -16,12 +17,14 @@ from aiogram.fsm.state import StatesGroup, State
 from create_bot import logger, bot, dp, users_data
 from handlers import main_commands, admin_commands
 
+
 # Определяем состояния
 class LinkStates(StatesGroup):
     waiting_for_link = State()
     waiting_for_link_removal = State()
     waiting_for_admin_action = State()
     waiting_for_generated_link_name = State()
+
 
 # Настройка Chrome в headless режиме
 def setup_driver():
@@ -39,60 +42,96 @@ def setup_driver():
         logger.error(f"Ошибка инициализации драйвера: {e}")
         raise
 
+
+# Нормализация идентификатора, извлечение только числовой части
+def normalize_item_id(item_id):
+    match = re.search(r'\d+', item_id)
+    return match.group(0) if match else item_id
+
+
 async def monitor_links():
-    driver = setup_driver()
+    driver = setup_driver()  # Настройка драйвера
     try:
         while True:
             for user_id, data in users_data.items():
-                # Убедимся, что ключи 'sent_items' и 'previous_items' существуют
-                if "sent_items" not in data:
-                    data["sent_items"] = set()
-                if "previous_items" not in data:
-                    data["previous_items"] = set()
+                # Проверяем наличие ключей
+                data.setdefault("sent_items", set())
+                data.setdefault("previous_items", {})
 
                 if data["links"]:
                     for link in data["links"]:
-                        # Получаем текущие товары с помощью fetch_vinted_items
+                        # Получаем текущие товары
                         items = await asyncio.to_thread(fetch_vinted_items, link, driver)
-                        current_items = {item["item_id"] for item in items}  # Собираем все уникальные ID товаров
+                        # Нормализуем текущие идентификаторы
+                        current_items = {normalize_item_id(item["item_id"]): item for item in items}
 
-                        # Определяем новые элементы, которых не было в предыдущем наборе
-                        new_items = current_items - data["previous_items"]
+                        # Логируем полученные текущие товары
+                        logger.info(f"[{link}] Current items ({len(current_items)}): {list(current_items.keys())}")
 
-                        # Отправляем только те элементы, которые не были отправлены ранее
-                        for item in items:
-                            if item["item_id"] in new_items and item["item_id"] not in data["sent_items"]:
-                                builder = InlineKeyboardBuilder()
-                                builder.row(types.InlineKeyboardButton(
-                                    text="Show", url=item["item_url"])
-                                )
-                                if item["title"]:  # Проверка наличия названия товара
-                                    await bot.send_message(
-                                        user_id,
-                                        "\n".join(
-                                            part.replace(":", ": <b>") + "</b>" if ":" in part else part for part in
-                                            item["title"].split(", ")) + f"\n{hide_link(item['img_url'])}",
-                                        reply_markup=builder.as_markup()
-                                    )
-                                    # Добавляем ID товара в список отправленных товаров
-                                    data["sent_items"].add(item["item_id"])
-                                    logger.info(f"Sent new item: {item['title']} to user {user_id}")
-                                else:
-                                    logger.warning(f"Item without title, skipping.")
-                            else:
-                                logger.debug(
-                                    f"Item with ID {item['item_id']} already sent to user {user_id}, skipping.")
+                        # Пропускаем первую итерацию, инициализируя previous_items
+                        if link not in data["previous_items"]:
+                            data["previous_items"][link] = current_items
+                            logger.info(f"[{link}] Initialized previous_items with {len(current_items)} items")
+                            continue
 
-                        # Обновляем предыдущие элементы для следующей итерации после отправки всех новых элементов
-                        data["previous_items"] = current_items
+                        # Логируем состояние previous_items перед сравнением
+                        previous_items = data["previous_items"][link]
+                        logger.info(f"[{link}] Previous items ({len(previous_items)}): {list(previous_items.keys())}")
+
+                        # Находим новые товары
+                        new_items = {
+                            item_id: item
+                            for item_id, item in current_items.items()
+                            if item_id not in previous_items and item_id not in data["sent_items"]
+                        }
+
+                        # Логируем предварительные новые товары
+                        logger.info(f"[{link}] Preliminary new items ({len(new_items)}): {list(new_items.keys())}")
+
+                        # Исключаем "старые" товары, которые могли быть добавлены с предыдущей страницы
+                        for item_id in previous_items.keys():
+                            if item_id in current_items and current_items[item_id] == previous_items[item_id]:
+                                new_items.pop(item_id, None)
+
+                        # Логируем окончательные новые товары
+                        logger.info(f"[{link}] Final new items ({len(new_items)}): {list(new_items.keys())}")
+
+                        # Передаем найденные новые товары для отправки
+                        if new_items:
+                            await send_new_items(new_items, user_id, data)
+
+                        # Обновляем предыдущие элементы
+                        data["previous_items"][link] = current_items
+                        logger.info(f"[{link}] Updated previous_items with {len(current_items)} items")
+
+                # Логируем отправленные элементы для данного пользователя
+                logger.info(f"[User {user_id}] Sent items ({len(data['sent_items'])}): {list(data['sent_items'])}")
 
             await asyncio.sleep(30)
     finally:
         driver.quit()
 
+
+async def send_new_items(new_items, user_id, data):
+    for item_id, item in new_items.items():
+        builder = InlineKeyboardBuilder()
+        builder.row(types.InlineKeyboardButton(text="Show", url=item["item_url"]))
+
+        if item["title"]:
+            await bot.send_message(
+                user_id,
+                f"<b>{item['title']}</b>\n{hide_link(item['img_url'])}",
+                reply_markup=builder.as_markup(),
+                parse_mode="HTML"
+            )
+            data["sent_items"].add(item_id)
+            logger.info(f"Sent item {item['title']} to user {user_id}")
+
+
 # Случайная задержка при обращении к сайту
 def random_delay(min_seconds=1, max_seconds=3):
     time.sleep(random.uniform(min_seconds, max_seconds))
+
 
 # Функция для получения и парсинга данных с сайта Vinted
 def fetch_vinted_items(url, driver):
@@ -110,15 +149,15 @@ def fetch_vinted_items(url, driver):
         logger.error(f"Ошибка загрузки страницы: {e}")
         return []
 
-    items = driver.find_elements(By.CLASS_NAME, "u-position-relative")
+    items = driver.find_elements(By.CSS_SELECTOR, ".u-position-relative.u-min-height-none.u-flex-auto")[:10]
+
     results = []
 
     for item in items:
         try:
-            title_element = item.find_element(By.XPATH,
-                                              "/html/body/div[1]/div/div/main/div/div[1]/div/div[2]/div/div/div/section/div[15]/div/div[1]/div/div/div/div[2]/div[1]/div/img")  # Обновлённый путь для заголовка
-            element_url = item.find_element(By.XPATH,
-                                            "/html/body/div[1]/div/div/main/div/div[1]/div/div[2]/div/div/div/section/div[15]/div/div[1]/div/div/div/div[2]/a")
+            title_element = item.find_element(By.TAG_NAME, "img")  # Обновлённый путь для заголовка
+            element_url = item.find_element(By.TAG_NAME, "a")  # Собираем все данные об элементе
+
             # Собираем все данные об элементе
             item_data = {
                 "title": title_element.get_attribute('alt'),
@@ -129,9 +168,10 @@ def fetch_vinted_items(url, driver):
             results.append(item_data)
         except Exception as e:
             logger.error(f"Ошибка обработки элемента: {e}")
-    print(results)
+    print(len(results))
 
     return results
+
 
 # Запуск бота и мониторинга
 async def main():
@@ -142,6 +182,7 @@ async def main():
         dp.start_polling(bot),
         monitor_links()
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -21,7 +21,7 @@ async def cmd_start(message: Message):
     user_id = message.chat.id
     if user_id not in users_data:
         # Инициализируем пользователя с ключом 'sent_items'
-        users_data[user_id] = {"links": [], "sent_items": set(), "is_premium": False, "is_admin": user_id in admins}
+        users_data[user_id] = {"links": [], "sent_items": set(), "is_premium": False, "is_admin": user_id in admins, "is_banned": False}
         if users_data[user_id]["is_admin"]:
             users_data[user_id]["is_premium"] = True
             keyboard.add(KeyboardButton(text="Администрирование"))
